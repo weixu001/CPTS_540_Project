@@ -1,0 +1,26 @@
+# environment.yml
+name: triviaqa
+channels:
+  - conda-forge
+  - pytorch              
+dependencies:
+  - python=3.9
+  - pytorch=2.2           
+  - pytorch-cuda=12.1        
+  - pytorch-lightning=2.2
+  - transformers=4.51
+  - datasets
+  - accelerate
+  - faiss-gpu=1.7.4          
+  - sentencepiece
+  - peft
+  - evaluate                
+  - numpy
+  - pandas
+  - scikit-learn
+  - tqdm
+  - psutil
+  - pip                   
+  - pip:
+      - rouge-score         
+      - rich                
