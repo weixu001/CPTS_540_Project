@@ -13,6 +13,17 @@ Example:
     --val_ratio        0.1    \
     --max_samples      20000
 """
+import accelerate
+from accelerate import Accelerator as _OldAccelerator
+class Accelerator(_OldAccelerator):
+    def __init__(self, *args, **kwargs):
+        for bad in ("dispatch_batches", "use_seedable_sampler"):
+            kwargs.pop(bad, None)
+        super().__init__(*args, **kwargs)
+
+import accelerate
+accelerate.Accelerator = Accelerator
+
 import argparse, json, random
 from datasets import Dataset, DatasetDict
 from evaluate import load as load_metric
@@ -24,6 +35,7 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, TaskType
 import numpy as np
+
 
 def read_jsonl(path, max_samples=None):
     rows = []
@@ -114,8 +126,8 @@ def main():
         learning_rate            = args.learning_rate,
         num_train_epochs         = args.epochs,
         logging_steps            = 100,
-        eval_strategy      = "steps",
-        evaluation_strategy               = 200,
+        evaluation_strategy      = "steps",
+        eval_steps              = 200,
         save_strategy            = "steps",
         save_steps               = 200,
         save_total_limit         = 2,
