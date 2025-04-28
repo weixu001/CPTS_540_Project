@@ -78,8 +78,12 @@ python "$SRC/wiki_build_passages.py" \
 # ---------------------------------------------------------------------
 python "$SRC/wiki_prep_retrieval.py" \
   --data_dir "$REPO/data_dir" \
-  --split    0.8 \
-  --max_samples 2000
+  --index_file    "$DATA/wiki_hnsw.faiss" \
+  --meta_file     "$DATA/wiki_hnsw_meta.npy" \
+  --k 15\
+  --split 0.8 \
+  --max_samples 2000\
+  --output_json pretrieved_triviaqa_hnsw.jsonl 
 
 # ---------------------------------------------------------------------
 # 7.1) Generator-only fine-tuning (T5-LoRA)
