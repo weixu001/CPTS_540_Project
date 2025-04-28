@@ -1,69 +1,103 @@
 #!/usr/bin/env python3
 """
-Create train/val/test splits of Question → Answer for RAG end2end
-and write out:
-  train.source  (questions)
-  train.target  (gold answers)
-  val.source
-  val.target
-  test.source
-  test.target
+Build a ‘pre-retrieved’ TriviaQA file for generator fine-tuning.
+
+Each JSONL line:
+{
+  "question": "...",
+  "answers":  ["gold", "aliases", ...],
+  "contexts": [
+      {"title": ..., "score": 12.3},
+      ...
+  ]
+}
 """
-import os
-import random
+import argparse, json, time
+from pathlib import Path
+
+import numpy as np, faiss, torch
 from datasets import load_dataset
+from transformers import (
+    DPRQuestionEncoder, DPRQuestionEncoderTokenizerFast
+)
 
+# ───────────────────────────────────────────────────────────────
+def dpr_embed(questions, tok, enc, device):
+    batch = tok(
+        questions,
+        padding=True, truncation=True,
+        return_tensors="pt"
+    ).to(device)
+    with torch.no_grad():
+        return enc(**batch).pooler_output.cpu().numpy()
+
+# ───────────────────────────────────────────────────────────────
 def main():
-    import argparse
-    p = argparse.ArgumentParser(
-        description="Build question/answer .source/.target files for RAG end2end"
-    )
-    p.add_argument("--data_dir",      required=True,
-                   help="where to write .source and .target files")
-    p.add_argument("--split",  type=float, default=0.8,
-                   help="fraction for train; rest equally val/test")
-    p.add_argument("--seed",   type=int,   default=42)
-    p.add_argument("--max_samples", type=int, default=None,
-                   help="if set, only take this many questions")
-    args = p.parse_args()
+    pa = argparse.ArgumentParser()
+    pa.add_argument("--data_dir",      required=True)
+    pa.add_argument("--index_file",    required=True)
+    pa.add_argument("--meta_file",     required=True)
+    pa.add_argument("--output_json",   default="pretrieved_triviaqa.jsonl")
+    pa.add_argument("--k",             type=int, default=5)
+    pa.add_argument("--split",         type=float, default=0.8)
+    pa.add_argument("--max_samples",   type=int, default=None)
+    pa.add_argument("--batch_size",    type=int, default=32)
+    args = pa.parse_args()
 
-    # 1) load TriviaQA
+    # 1) FAISS index + metadata
+    print("🔹 loading FAISS index:", args.index_file)
+    index = faiss.read_index(args.index_file)
+    meta  = np.load(args.meta_file, allow_pickle=True)
+    print("    ntotal:", index.ntotal)
+
+    # 2) DPR question encoder
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    q_tok  = DPRQuestionEncoderTokenizerFast.from_pretrained(
+               "facebook/dpr-question_encoder-single-nq-base")
+    q_enc  = DPRQuestionEncoder.from_pretrained(
+               "facebook/dpr-question_encoder-single-nq-base").to(device).eval()
+
+    # 3) TriviaQA
     ds = load_dataset("trivia_qa", "rc.nocontext", split="train")
     if args.max_samples:
         ds = ds.select(range(args.max_samples))
+    n = len(ds)
+    print(f"🔹 sampling {n} examples")
 
-    # 2) extract (question, answer) pairs
-    qa = []
-    for ex in ds:
-        q = ex["question"].strip().replace("\n", " ")
-        # take one gold answer
-        golds = ex["answer"]["aliases"] or [ex["answer"]["value"]]
-        a = golds[0].strip().replace("\n", " ")
-        qa.append((q, a))
+    # 4) iterate & write JSONL
+    Path(args.output_json).parent.mkdir(parents=True, exist_ok=True)
+    out = open(args.output_json, "w")
+    t0 = time.time()
 
-    # 3) shuffle & split
-    random.seed(args.seed)
-    random.shuffle(qa)
-    n_train = int(len(qa) * args.split)
-    n_rest  = len(qa) - n_train
-    n_val   = n_rest // 2
+    for start in range(0, n, args.batch_size):
+        batch = ds[start : start + args.batch_size]
 
-    splits = {
-        "train": qa[:n_train],
-        "val":   qa[n_train:n_train + n_val],
-        "test":  qa[n_train + n_val:]
-    }
+        # batch is a dict of columns → list
+        questions = [q.strip().replace("\n", " ") for q in batch["question"]]
+        answers = [
+            (a["aliases"] or [a["value"]])
+            for a in batch["answer"]
+        ]
 
-    # 4) write out .source / .target for each split
-    os.makedirs(args.data_dir, exist_ok=True)
-    for name, items in splits.items():
-        src_path = os.path.join(args.data_dir, f"{name}.source")
-        tgt_path = os.path.join(args.data_dir, f"{name}.target")
-        with open(src_path, "w") as f_q, open(tgt_path, "w") as f_a:
-            for q, a in items:
-                f_q.write(q + "\n")
-                f_a.write(a + "\n")
-        print(f"→ Wrote {len(items)} lines to {src_path} & {tgt_path}")
+        q_vecs = dpr_embed(questions, q_tok, q_enc, device)
+        D, I   = index.search(q_vecs, args.k)
 
+        for q, golds, dists, ids in zip(questions, answers, D, I):
+            ctxs = [str(meta[idx]) for idx in ids]
+            out.write(json.dumps({
+                "question": q,
+                "answers":  golds[0],
+                "contexts": ctxs
+            }) + "\n")
+
+        if (start // args.batch_size) % 10 == 0:
+            done = min(start + args.batch_size, n)
+            print(f"  processed {done}/{n}", end="\r")
+
+    out.close()
+    print(f"\n✅ wrote {n} lines to {args.output_json} "
+          f"({time.time() - t0:.1f}s)")
+
+# ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     main()
