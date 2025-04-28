@@ -115,7 +115,7 @@ def main():
         num_train_epochs         = args.epochs,
         logging_steps            = 100,
         eval_strategy      = "steps",
-        eval_steps               = 200,
+        evaluation_strategy               = 200,
         save_strategy            = "steps",
         save_steps               = 200,
         save_total_limit         = 2,
