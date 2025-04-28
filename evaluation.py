@@ -81,9 +81,9 @@ def evaluate(mode, args, device, ds):
         t5_tok, t5_mdl = build_t5("t5-base",
                                   args.lora_dir if mode=="lora" else None,
                                   device)
-        faiss_idx = faiss.read_index("wiki_passages_dataset_hnsw/embeddings.faiss")
+        faiss_idx = faiss.read_index(args.index_path)
         faiss_idx.nprobe = args.k
-        passages = np.load("wiki_hnsw_meta.npy",allow_pickle=True)
+        passages = np.load("data/wiki_hnsw_meta.npy",allow_pickle=True)
     if mode=="rag":
         rag_tok, rag_mdl = build_rag(args.ckpt_dir,args.passages_path,
                                      args.index_path,device)
