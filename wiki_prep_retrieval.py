@@ -86,7 +86,7 @@ def main():
             ctxs = [str(meta[idx]) for idx in ids]
             out.write(json.dumps({
                 "question": q,
-                "answers":  golds[0],
+                "answer":  golds[0],
                 "contexts": ctxs
             }) + "\n")
 
